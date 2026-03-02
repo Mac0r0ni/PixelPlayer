@@ -21,6 +21,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import androidx.core.net.toUri
 import com.theveloper.pixelplay.data.database.FavoritesDao
+import com.theveloper.pixelplay.data.database.LyricsDao
 import com.theveloper.pixelplay.data.database.MusicDao
 import com.theveloper.pixelplay.data.database.SearchHistoryDao
 import com.theveloper.pixelplay.data.database.SearchHistoryEntity
@@ -80,6 +81,7 @@ class MusicRepositoryImpl @Inject constructor(
     private val userPreferencesRepository: UserPreferencesRepository,
     private val searchHistoryDao: SearchHistoryDao,
     private val musicDao: MusicDao,
+    private val lyricsDao: LyricsDao,
     private val lyricsRepository: LyricsRepository,
     private val telegramDao: TelegramDao,
     private val telegramCacheManager: com.theveloper.pixelplay.data.telegram.TelegramCacheManager,
@@ -511,7 +513,14 @@ class MusicRepositoryImpl @Inject constructor(
     override fun getSong(songId: String): Flow<Song?> {
         val longId = songId.toLongOrNull()
         return if (longId != null) {
-            musicDao.getSongById(longId).map { it?.toSong() }.flowOn(Dispatchers.IO)
+            combine(
+                musicDao.getSongById(longId),
+                lyricsDao.observeLyrics(longId)
+            ) { songEntity, lyricsEntity ->
+                songEntity
+                    ?.toSong()
+                    ?.copy(lyrics = lyricsEntity?.content ?: songEntity.lyrics)
+            }.flowOn(Dispatchers.IO)
         } else {
             combine(
                 telegramDao.getSongsByIds(listOf(songId)),

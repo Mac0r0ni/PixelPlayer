@@ -3,6 +3,7 @@ package com.theveloper.pixelplay.presentation.viewmodel
 import com.theveloper.pixelplay.R
 import com.theveloper.pixelplay.data.media.AudioMetadataReader
 import com.theveloper.pixelplay.data.media.CoverArtUpdate
+import com.theveloper.pixelplay.data.media.LyricsStoragePolicy
 import com.theveloper.pixelplay.data.media.SongMetadataEditor
 import com.theveloper.pixelplay.data.model.Lyrics
 import com.theveloper.pixelplay.data.model.LyricsSourcePreference
@@ -269,12 +270,23 @@ class LyricsStateHolder @Inject constructor(
      */
     fun importLyricsFromFile(songId: Long, lyricsContent: String, currentSong: Song?) {
         scope?.launch {
-            musicRepository.updateLyrics(songId, lyricsContent)
+            val normalizedLyrics = LyricsStoragePolicy.normalize(lyricsContent)
+            if (normalizedLyrics == null) {
+                val message = if (lyricsContent.isBlank()) {
+                    "Lyrics file is empty."
+                } else {
+                    "Lyrics exceed the ${LyricsStoragePolicy.MAX_LYRICS_LENGTH}-character limit."
+                }
+                _messageEvents.emit(message)
+                return@launch
+            }
+
+            musicRepository.updateLyrics(songId, normalizedLyrics)
 
             if (currentSong != null && currentSong.id.toLongOrNull() == songId) {
-                val parsedLyrics = LyricsUtils.parseLyrics(lyricsContent)
-                val updatedSong = currentSong.copy(lyrics = lyricsContent)
-                persistLyricsToFileMetadataIfPossible(updatedSong, lyricsContent)
+                val parsedLyrics = LyricsUtils.parseLyrics(normalizedLyrics)
+                val updatedSong = currentSong.copy(lyrics = normalizedLyrics)
+                persistLyricsToFileMetadataIfPossible(updatedSong, normalizedLyrics)
                 _songUpdates.emit(updatedSong to parsedLyrics.takeIf(::hasValidLyrics))
             }
 
@@ -321,8 +333,7 @@ class LyricsStateHolder @Inject constructor(
 
     private suspend fun persistLyricsToFileMetadataIfPossible(song: Song, rawLyrics: String) {
         val songId = song.id.toLongOrNull() ?: return
-        val normalizedLyrics = rawLyrics.trim()
-        if (normalizedLyrics.isBlank()) return
+        val normalizedLyrics = LyricsStoragePolicy.normalize(rawLyrics) ?: return
 
         withContext(Dispatchers.IO) {
             val existingArtwork = runCatching {

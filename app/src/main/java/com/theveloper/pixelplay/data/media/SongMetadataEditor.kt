@@ -60,7 +60,6 @@ class SongMetadataEditor(
         const val MAX_ARTIST_LENGTH = 500
         const val MAX_ALBUM_LENGTH = 500
         const val MAX_GENRE_LENGTH = 100
-        const val MAX_LYRICS_LENGTH = 50_000
     }
 
     /**
@@ -78,7 +77,7 @@ class SongMetadataEditor(
         if (artist.length > MetadataLimits.MAX_ARTIST_LENGTH) return "Artist name too long"
         if (album.length > MetadataLimits.MAX_ALBUM_LENGTH) return "Album name too long"
         if (genre.length > MetadataLimits.MAX_GENRE_LENGTH) return "Genre too long"
-        if (lyrics.length > MetadataLimits.MAX_LYRICS_LENGTH) return "Lyrics too long"
+        if (lyrics.isNotBlank() && !LyricsStoragePolicy.canStore(lyrics)) return "Lyrics too long"
         return null
     }
 
@@ -120,7 +119,6 @@ class SongMetadataEditor(
             val trimmedLyrics = newLyrics.trim()
             val trimmedGenre = newGenre.trim()
             val normalizedGenre = trimmedGenre.takeIf { it.isNotBlank() }
-            val normalizedLyrics = trimmedLyrics.takeIf { it.isNotBlank() }
 
             // 1. FIRST: Get file path (Handle both MediaStore and Telegram/Negative IDs)
             val isTelegramSong = songId < 0
@@ -244,7 +242,6 @@ class SongMetadataEditor(
                     newArtist,
                     newAlbum,
                     normalizedGenre,
-                    normalizedLyrics,
                     newTrackNumber
                 )
 
