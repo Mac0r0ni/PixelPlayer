@@ -2019,6 +2019,7 @@ class PlayerViewModel @Inject constructor(
         updateCurrentPlaybackQueueFromPlayer(playerCtrl)
 
         playerCtrl.currentMediaItem?.let { mediaItem ->
+            playbackStateHolder.ensureCurrentPlaybackOccurrence(mediaItem.mediaId)
             val song = resolveSongFromMediaItem(mediaItem)
 
             if (song != null) {
@@ -2100,6 +2101,7 @@ class PlayerViewModel @Inject constructor(
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 if (isRemoteSessionControllingPlayback()) return
+                playbackStateHolder.onPlaybackOccurrenceTransition(mediaItem?.mediaId)
                 preparePlaybackAudioMetadataForMedia(mediaItem?.mediaId)
                 transitionSchedulerJob?.cancel()
                 lyricsStateHolder.cancelLoading()

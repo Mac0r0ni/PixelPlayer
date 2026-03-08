@@ -567,7 +567,7 @@ fun UnifiedPlayerSheet(
                                         )
                                     )
                                     layout(constraints.maxWidth, targetHeightPx) {
-                                        placeable.place(startPaddingPx, 0)
+                                        placeable.placeRelative(startPaddingPx, 0)
                                     }
                                 }
                                 .miniPlayerDismissHorizontalGesture(
