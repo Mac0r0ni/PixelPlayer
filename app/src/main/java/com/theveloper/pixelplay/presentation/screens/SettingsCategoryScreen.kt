@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.format.Formatter
 import android.widget.Toast
@@ -77,7 +78,6 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -110,6 +110,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -121,6 +122,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextGeometricTransform
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -131,6 +133,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavController
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import com.theveloper.pixelplay.R
@@ -1110,9 +1113,7 @@ fun SettingsCategoryScreen(
         }
     }
 
-    dataTransferProgress?.let { progress ->
-        BackupTransferProgressDialog(progress = progress)
-    }
+    BackupTransferProgressDialogHost(progress = dataTransferProgress)
 
     // Dialogs
     FileExplorerDialog(
@@ -1790,14 +1791,58 @@ private fun BackupSectionSelectableCard(
     }
 }
 
+private const val BackupTransferDialogMinimumVisibilityMs = 1500L
+
+@Composable
+private fun BackupTransferProgressDialogHost(progress: BackupTransferProgressUpdate?) {
+    var visibleProgress by remember { mutableStateOf<BackupTransferProgressUpdate?>(null) }
+    var visibleSinceMs by remember { mutableStateOf(0L) }
+    var isHoldingForMinimumTime by remember { mutableStateOf(false) }
+
+    LaunchedEffect(progress) {
+        if (progress != null) {
+            if (visibleProgress == null || isHoldingForMinimumTime) {
+                visibleSinceMs = SystemClock.elapsedRealtime()
+            }
+            isHoldingForMinimumTime = false
+            visibleProgress = progress
+            return@LaunchedEffect
+        }
+
+        val currentVisibleProgress = visibleProgress ?: return@LaunchedEffect
+        isHoldingForMinimumTime = true
+        val elapsed = SystemClock.elapsedRealtime() - visibleSinceMs
+        val remaining = BackupTransferDialogMinimumVisibilityMs - elapsed
+        if (remaining > 0) {
+            delay(remaining)
+        }
+        if (visibleProgress == currentVisibleProgress) {
+            visibleProgress = null
+            visibleSinceMs = 0L
+        }
+        isHoldingForMinimumTime = false
+    }
+
+    visibleProgress?.let { currentProgress ->
+        BackupTransferProgressDialog(progress = currentProgress)
+    }
+}
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun BackupTransferProgressDialog(progress: BackupTransferProgressUpdate) {
     val animatedProgress by animateFloatAsState(
-        targetValue = progress.progress,
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        targetValue = progress.progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 300),
         label = "BackupTransferProgress"
     )
+    val progressPercent = (animatedProgress * 100f).roundToInt().coerceIn(0, 100)
+    val statusText = if (progress.operation == BackupOperationType.EXPORT) {
+        "Exporting"
+    } else {
+        "Importing"
+    }
+    val stepText = "Step ${progress.step.coerceAtLeast(1)} of ${progress.totalSteps}"
 
     Dialog(
         onDismissRequest = {},
@@ -1829,8 +1874,27 @@ private fun BackupTransferProgressDialog(progress: BackupTransferProgressUpdate)
                     fontWeight = FontWeight.SemiBold
                 )
 
-                CircularWavyProgressIndicator(modifier = Modifier.size(44.dp))
-                LoadingIndicator(modifier = Modifier.height(24.dp))
+                Box(
+                    modifier = Modifier
+                        .size(96.dp)
+                        .padding(vertical = 20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LoadingIndicator(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .scale(1.84f),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "$progressPercent%",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = MaterialTheme.typography.labelLarge.fontSize * 1.4f
+                        ),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
 
                 LinearWavyProgressIndicator(
                     progress = { animatedProgress },
@@ -1843,29 +1907,41 @@ private fun BackupTransferProgressDialog(progress: BackupTransferProgressUpdate)
                 )
 
                 Text(
-                    text = "Step ${progress.step.coerceAtLeast(1)} of ${progress.totalSteps}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = progress.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "$statusText • $stepText",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
                 )
 
                 AnimatedContent(
-                    targetState = progress.title,
+                    targetState = progress.detail,
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "BackupStepTitle"
-                ) { animatedTitle ->
+                    label = "BackupStepDetail"
+                ) { animatedDetail ->
                     Text(
-                        text = animatedTitle,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Medium
+                        text = animatedDetail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
 
-                Text(
-                    text = progress.detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                progress.section?.let { section ->
+                    Text(
+                        text = section.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
     }
