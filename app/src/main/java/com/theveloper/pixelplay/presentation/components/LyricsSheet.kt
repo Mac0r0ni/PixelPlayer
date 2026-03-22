@@ -119,6 +119,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.theveloper.pixelplay.data.preferences.dataStore
 import androidx.compose.ui.graphics.TransformOrigin
 
@@ -188,6 +190,12 @@ fun LyricsSheet(
     val currentSong by remember { derivedStateOf { stablePlayerState.currentSong } }
 
     val context = LocalContext.current
+
+    // Read lyrics alignment preference internally from DataStore
+    val lyricsAlignmentFlow = remember(context) {
+        context.dataStore.data.map { it[stringPreferencesKey("lyrics_alignment")] ?: "left" }
+    }
+    val lyricsAlignment by lyricsAlignmentFlow.collectAsStateWithLifecycle(initialValue = "left")
 
     // Read animated lyrics preference internally from DataStore
     val useAnimatedLyricsFlow = remember(context) {
@@ -560,6 +568,7 @@ fun LyricsSheet(
                                 animatedLyricsBlurEnabled = animatedLyricsBlurEnabled,
                                 animatedLyricsBlurStrength = animatedLyricsBlurStrength,
                                 immersiveMode = immersiveMode,
+                                lyricsAlignment = lyricsAlignment,
                                 footer = {
                                     if (lyrics?.areFromRemote == true) {
                                         item(key = "provider_text") {
@@ -598,6 +607,7 @@ fun LyricsSheet(
                                     PlainLyricsLine(
                                         line = line,
                                         style = lyricsTextStyle,
+                                        lyricsAlignment = lyricsAlignment,
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
@@ -791,6 +801,14 @@ fun LyricsSheet(
                         resetImmersiveTimer()
                         onSetImmersiveTemporarilyDisabled(it)
                     },
+                    lyricsAlignment = lyricsAlignment,
+                    onLyricsAlignmentChange = { newAlignment ->
+                        coroutineScope.launch {
+                            context.dataStore.edit { preferences ->
+                                preferences[stringPreferencesKey("lyrics_alignment")] = newAlignment
+                            }
+                        }
+                    },
                     isShuffleEnabled = isShuffleEnabled,
                     repeatMode = repeatMode,
                     isFavoriteProvider = isFavoriteProvider,
@@ -897,6 +915,7 @@ fun SyncedLyricsList(
     animatedLyricsBlurEnabled: Boolean = true,
     animatedLyricsBlurStrength: Float = 2.5f,
     immersiveMode: Boolean = false,
+    lyricsAlignment: String = "left",
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     footer: LazyListScope.() -> Unit = {}
@@ -998,6 +1017,7 @@ fun SyncedLyricsList(
                             animatedLyricsBlurEnabled = animatedLyricsBlurEnabled,
                             animatedLyricsBlurStrength = animatedLyricsBlurStrength,
                             immersiveMode = immersiveMode,
+                            lyricsAlignment = lyricsAlignment,
                             accentColor = accentColor,
                             style = textStyle,
                             modifier = parallaxModifier
@@ -1048,6 +1068,7 @@ fun LyricLineRow(
     animatedLyricsBlurEnabled: Boolean = true,
     animatedLyricsBlurStrength: Float = 2.5f,
     immersiveMode: Boolean = false,
+    lyricsAlignment: String = "left",
     accentColor: Color,
     style: TextStyle,
     modifier: Modifier = Modifier,
@@ -1121,7 +1142,11 @@ fun LyricLineRow(
 
     // Animated mode: apply graphicsLayer for scale/alpha transforms
     val baseModifier = if (useAnimatedLyrics && !immersiveMode) {
-        modifier.padding(end = 36.dp)
+        when (lyricsAlignment) {
+            "center" -> modifier.padding(horizontal = 36.dp)
+            "right" -> modifier.padding(start = 36.dp, end = 36.dp)
+            else -> modifier.padding(end = 36.dp)
+        }
     } else {
         modifier
     }
@@ -1131,7 +1156,14 @@ fun LyricLineRow(
                 scaleX = scale
                 scaleY = scale
                 this.alpha = alpha
-                transformOrigin = TransformOrigin(0f, 0.5f)
+                transformOrigin = TransformOrigin(
+                    pivotFractionX = when (lyricsAlignment) {
+                        "center" -> 0.5f
+                        "right" -> 1f
+                        else -> 0f
+                    },
+                    pivotFractionY = 0.5f
+                )
             }
             .then(if (blurRadius > 0.dp) Modifier.blur(blurRadius) else Modifier)
     } else baseModifier
@@ -1142,26 +1174,47 @@ fun LyricLineRow(
     }
     val translationColor = lineColor.copy(alpha = lineColor.alpha * 0.7f)
 
+    val horizontalAlignment = when (lyricsAlignment) {
+        "center" -> Alignment.CenterHorizontally
+        "right" -> Alignment.End
+        else -> Alignment.Start
+    }
+    
+    val textAlign = when (lyricsAlignment) {
+        "center" -> TextAlign.Center
+        "right" -> TextAlign.Right
+        else -> TextAlign.Left
+    }
+    
+    val boxAlignment = when (lyricsAlignment) {
+        "center" -> Alignment.TopCenter
+        "right" -> Alignment.TopEnd
+        else -> Alignment.TopStart
+    }
+
     if (sanitizedWords.isNullOrEmpty()) {
         Column(
             modifier = animatedModifier
                 .clip(RoundedCornerShape(12.dp))
                 .clickable { onClick() }
-                .padding(vertical = verticalPadding, horizontal = 2.dp)
+                .padding(vertical = verticalPadding, horizontal = 2.dp),
+            horizontalAlignment = horizontalAlignment
         ) {
-            Box {
+            Box(contentAlignment = boxAlignment) {
                 // Invisible bold text to reserve layout space and prevent reflow
                 Text(
                     text = sanitizedLine,
                     style = style,
                     color = Color.Transparent,
                     fontWeight = FontWeight.Bold,
+                    textAlign = textAlign
                 )
                 Text(
                     text = sanitizedLine,
                     style = style,
                     color = lineColor,
                     fontWeight = if (isCurrentLine) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = textAlign
                 )
             }
             if (!translationText.isNullOrBlank()) {
@@ -1169,6 +1222,7 @@ fun LyricLineRow(
                     text = translationText,
                     style = translationStyle,
                     color = translationColor,
+                    textAlign = textAlign,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
@@ -1189,10 +1243,15 @@ fun LyricLineRow(
             modifier = animatedModifier
                 .clip(RoundedCornerShape(12.dp))
                 .clickable { onClick() }
-                .padding(vertical = verticalPadding, horizontal = 2.dp)
+                .padding(vertical = verticalPadding, horizontal = 2.dp),
+            horizontalAlignment = horizontalAlignment
         ) {
             FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = when (lyricsAlignment) {
+                    "center" -> Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                    "right" -> Arrangement.spacedBy(6.dp, Alignment.End)
+                    else -> Arrangement.spacedBy(6.dp, Alignment.Start)
+                },
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 sanitizedWords.forEachIndexed { wordIndex, word ->
@@ -1213,6 +1272,7 @@ fun LyricLineRow(
                     text = translationText,
                     style = translationStyle,
                     color = translationColor,
+                    textAlign = textAlign,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
@@ -1238,7 +1298,10 @@ fun LyricWordSpan(
         ) else tween(durationMillis = 200),
         label = "wordColor"
     )
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
         // Invisible bold text to reserve layout space and prevent reflow
         Text(
             text = word.word,
@@ -1259,6 +1322,7 @@ fun LyricWordSpan(
 fun PlainLyricsLine(
     line: String,
     style: TextStyle,
+    lyricsAlignment: String = "left",
     modifier: Modifier = Modifier
 ) {
     val sanitizedLine = remember(line) { sanitizeLyricLineText(line) }
@@ -1266,6 +1330,11 @@ fun PlainLyricsLine(
         text = sanitizedLine,
         style = style,
         color = LocalContentColor.current.copy(alpha = 0.7f),
+        textAlign = when (lyricsAlignment) {
+            "center" -> TextAlign.Center
+            "right" -> TextAlign.Right
+            else -> TextAlign.Left
+        },
         modifier = modifier
     )
 }
